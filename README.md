@@ -1,4 +1,4 @@
-# Model Predicitive Control on Turtlebot3 Burger using ROS2 Jazzy
+# Model Predicitive Control on Turtlebot3 Burger on ROS2 Jazzy
 
 ## Implementation of Non Linear MPC on Turtlebot3 Burger as Multishooting Point Stabilization Problem using ROS2 Jazzy
 
