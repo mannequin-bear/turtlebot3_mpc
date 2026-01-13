@@ -3,8 +3,8 @@
 <package format="3">
   <name>turtlebot3_mpc</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="manish@todo.todo">manish</maintainer>
+  <description>NonLinear MPC implementation on Turtlebot3</description>
+  <maintainer email="mannequin@todo.todo">mannequin-bear</maintainer>
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>

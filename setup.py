@@ -25,8 +25,8 @@ setup(
         
     ],
     zip_safe=True,
-    maintainer='manish',
-    maintainer_email='manish@todo.todo',
+    maintainer='mannequin-bear',
+    maintainer_email='mannequin@todo.todo',
     description='My Model Predictive Control Implementation',
     license='TODO: License declaration',
     extras_require={

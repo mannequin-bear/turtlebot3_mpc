@@ -8,7 +8,7 @@ from math import atan2, sqrt, sin, cos
 import casadi as ca
 import numpy as np
 
-
+#If unable to understand, please refer to `bot_mpc.py`
 class MPC(Node):
     def __init__(self):
         super().__init__('MPC')
@@ -16,20 +16,16 @@ class MPC(Node):
         self.declare_parameter('q_x', 1.0)
         self.declare_parameter('q_y', 1.0)
         self.declare_parameter('q_t', 0.4)
-
         self.declare_parameter('qt_x', 5.0)
         self.declare_parameter('qt_y', 5.0)
         self.declare_parameter('qt_t', 2.0)
-
         self.declare_parameter('r_v', 0.1)
         self.declare_parameter('r_w', 0.5)
-
         self.declare_parameter('forward', 0)
-
         self.add_on_set_parameters_callback(self.parameter_callback)
                                             
-        self.dt = 0.05
-        self.N = 50
+        self.dt = 0.1
+        self.N = 30
         self.goal_state = None
         self.current_state = None
         self.prev_sol_X = None
@@ -61,7 +57,8 @@ class MPC(Node):
             '/cmd_vel',
             10
         )
-
+        
+        #Extra Publishers for visualization of cost using rqt
         self.cost_pub = self.create_publisher(
             Float32, 
             '/mpc/cost', 

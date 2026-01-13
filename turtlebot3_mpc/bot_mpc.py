@@ -11,35 +11,37 @@ class MPC(Node):
     def __init__(self):
         super().__init__('MPC')
 
+        #Parameters That can be changed dynamically in rqt
         self.declare_parameter('error', 0.05)
-
         self.declare_parameter('q_x', 1.0)
         self.declare_parameter('q_y', 1.0)
         self.declare_parameter('q_t', 0.4)
-
         self.declare_parameter('qt_x', 5.0)
         self.declare_parameter('qt_y', 5.0)
         self.declare_parameter('qt_t', 2.0)
-
         self.declare_parameter('r_v', 0.5)
         self.declare_parameter('r_w', 1)
+        self.declare_parameter('forward', 0)    
 
-        self.declare_parameter('forward', 0)                                            
-        self.dt = 0.1
-        self.N = 30
+
+        self.dt = 0.1       #Delta T
+        self.N = 30         #Prediction Horizon
+
+        #Some more params
         self.goal_state = None
         self.current_state = None
         self.prev_sol_X = None
         self.prev_sol_U = None
         self.goal_reached = False
 
+        #Declaring subscribers and Publishers
+        #Each subscriber calls their respective callback functions
         self.goal_sub = self.create_subscription(
             PoseStamped,
             "/goal_pose",
             self.goal_callback, 
             10
         )
-        
         self.odom_sub = self.create_subscription(
             Odometry, 
             '/odom',
@@ -52,14 +54,23 @@ class MPC(Node):
             '/cmd_vel',
             10
         ) 
-        self.path_pub = self.create_publisher(Path, '/mpc_path', 10)
-            
+        self.path_pub = self.create_publisher(
+            Path, 
+            '/mpc_path', 
+            10
+        )
+
+        #Defining the Model and Dynamics of the Turtlebot3
         self.f_model = self.robot_model()
+
+        #Declaring a Timer
         self.timer = self.create_timer(self.dt, self.control_loop)
+
+        #Log for Debugging
         self.get_logger().info('Node Initialized, Waiting for goal_pose...')
 
-    def robot_model(self):
-
+    #Defining the symbolic function which will give next_state if current_state and control inputs are given
+    def robot_model(self): 
         x = ca.SX.sym('x')
         y = ca.SX.sym('y')
         theta = ca.SX.sym('theta')
@@ -67,15 +78,14 @@ class MPC(Node):
         v = ca.SX.sym('v')
         w = ca.SX.sym('w')
         controls = ca.vertcat(v,w)
-
         rhs = ca.vertcat(
             x + (v*ca.cos(theta))*self.dt,
             y + (v*ca.sin(theta))*self.dt,
             theta + w*self.dt
         )
-
         return ca.Function('f', [states, controls], [rhs])
     
+    #Processing the Goal_Pose Recieved: Mainly converting quaternion angle to radians
     def goal_callback(self, msg):
         x = msg.pose.position.x
         y = msg.pose.position.y
@@ -90,22 +100,21 @@ class MPC(Node):
         self.goal_state = np.array([x, y, yaw])
         self.goal_reached = False
 
+    #Processing the Odom Recieved: Mainly converting quaternion angle to radians
     def odom_callback(self, msg):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
-
         q = msg.pose.pose.orientation
-
         z1 = 2 * (q.w * q.z + q.x * q.y)
         z2 = 1 - 2 * (q.y * q.y + q.z * q.z)
         yaw = atan2(z1, z2)
-        
         self.current_state = np.array([x, y, yaw])
     
-        
+    #Solving the MPC: Defining the Problem, Cost Function, Constraints
     def solve_mpc(self):
-        opti = ca.Opti()
 
+        # 1: Defining Parameters 
+        opti = ca.Opti()
         X = opti.variable(3, self.N+1)
         U = opti.variable(2, self.N)
 
@@ -116,6 +125,7 @@ class MPC(Node):
         v = U[0, :]
         w = U[1, :]
         
+        # 2: Intializing with previous solution making it easier for the MPC to get solved
         if self.prev_sol_X is not None:
             opti.set_initial(X, self.prev_sol_X)
             opti.set_initial(U, self.prev_sol_U)
@@ -134,27 +144,24 @@ class MPC(Node):
         f = self.get_parameter('forward').value
 
         Q = ca.diag([q_x, q_y, q_t])
-        Q_termainal = ca.diag([qt_x, qt_y, qt_t])
+        Q_termainal = ca.diag([qt_x, qt_y, qt_t]) #should be Q_terminal but it works either way
         R = ca.diag([r_v, r_w])
-        cost = 0
-        cost_q = 0
-        cost_u = 0
 
+        cost = 0
+
+        # 3: Defining the Cost
         for k in range(self.N):
             err = X[0:2, k] - self.goal_state[0:2]
-            cost_q += ca.mtimes(err.T, ca.mtimes(Q[0:2, 0:2], err))
-            cost_q += Q[2, 2] * (1 -  ca.cos(X[2, k] - self.goal_state[2]))
-
-            cost_u += ca.mtimes(U[:, k].T, ca.mtimes(R, U[:, k]))
+            cost += ca.mtimes(err.T, ca.mtimes(Q[0:2, 0:2], err))
+            cost += Q[2, 2] * (1 -  ca.cos(X[2, k] - self.goal_state[2]))
+            cost += ca.mtimes(U[:, k].T, ca.mtimes(R, U[:, k]))
         err_term = X[0:2, self.N] - self.goal_state[0:2]
         cost += ca.mtimes(err_term.T, ca.mtimes(Q_termainal[0:2, 0:2], err_term))
-        cost += Q_termainal[2, 2] * (1 - ca.cos(X[2, self.N] - self.goal_state[2]))
-        #cost += cost_q + cost_u
-        opti.minimize(cost_q + cost_u + cost)
+        cost += Q_termainal[2, 2] * (1 - ca.cos(X[2, self.N] - self.goal_state[2]))   #Using 1 - cos(theta) for angle to avoid circling as its radians
+        opti.minimize(cost)
 
-
+        # 4: Defining the Constraints
         for k in range(self.N):
-
             next_state_prediction = self.f_model(X[:, k], U[:, k])
             opti.subject_to(X[:, k+1] == next_state_prediction)
 
@@ -163,10 +170,11 @@ class MPC(Node):
         opti.subject_to(opti.bounded(f, v, 0.18))
         opti.subject_to(opti.bounded(-2.5, w, 2.5))
 
+        # 5: Configuring Solver to give no output
         opts = {'ipopt.print_level': 0, 'print_time': 0, 'ipopt.sb':'yes'}
         opti.solver('ipopt', opts)
 
-
+        # 6: Solving
         try:
             sol = opti.solve()
             self.prev_sol_X = sol.value(X)
@@ -176,12 +184,13 @@ class MPC(Node):
             print("Solver failed, Stopping...")
             return [0.0, 0.0]
         
+    # Function to visualize the path being solved
     def visualize_path(self):
         if self.prev_sol_X is None:
             return
 
         msg = Path()
-        # Important: Match this frame to your odometry frame (usually 'odom' or 'map')
+        # Match this frame to your odometry frame (usually 'odom' or 'map')
         msg.header.frame_id = 'odom' 
         msg.header.stamp = self.get_clock().now().to_msg()
 
@@ -208,7 +217,7 @@ class MPC(Node):
             msg.poses.append(pose)
 
         self.path_pub.publish(msg)
-        
+   
     def control_loop(self):
         if self.current_state is None:
             return
@@ -239,7 +248,8 @@ class MPC(Node):
         msg.twist.angular.z = float(optimal_u[1])
         self.cmd_vel_pub.publish(msg)
 
-        #duration = (self.get_clock().now() - start_time).nanoseconds / 1e9
+        #duration = (self.get_clock().now() - start_time).nanoseconds / 1e9 
+        #duration included for debugging, if duration > self.dt then this wouldnt work properly
 
 
 def main(args=None):
